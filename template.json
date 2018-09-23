@@ -1,0 +1,379 @@
+{
+	"$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+	"contentVersion": "1.0.0.0",
+	"parameters": {
+		"regionName": {
+			"type": "string"
+		},
+		"trafficManagerName": {
+			"type": "string"
+		},
+		"trafficManagerResourceGroup": {
+			"type": "string"
+		},
+		"trafficManagerResourceGroupLocation": {
+			"type": "string"
+		},
+		"keyVaultOwnerId": {
+			"type": "string",
+			"metadata": {
+				"description": "ID of AAD user who has full access rights. Look up userids with CLI like so: az ad user show <username>"
+			}
+		},
+		"deploy_location": {
+			"type": "string"
+		}
+	},
+	"variables": {
+		"virtualNetworkName": "[concat(parameters('regionName'), '-vnet')]",
+		"appGatewayPublicIpName": "[concat(parameters('regionName'), '-gwipaddress')]",
+		"appServicePlanName": "[concat(parameters('regionName'), '-appserviceplan')]",
+		"appServiceName": "[concat(parameters('regionName'), '-appservice-', substring(uniquestring(resourceGroup().name),0,6))]",
+		"keyVaultName": "[concat(parameters('regionName'), '-keyvault')]",
+		"keyVaultSkuFamily": "A",
+		"keyVaultSkuName": "standard",
+		"addressPrefix": "10.0.0.0/24",
+		"subnetName": "default",
+		"subnetPrefix": "10.0.0.0/24",
+		"publicIpAddressType": "Dynamic",
+		"appServicePlanSize": "S1",
+		"appServicePlanInstances": "1",
+		"appGatewayName": "[concat(parameters('regionName'), '-appgateway')]",
+		"appGatewaySkuName": "WAF_Medium",
+		"appGatewaySkuTier": "WAF",
+		"appGatewaySkuCapacity": 1,
+		"appGatewayID": "[resourceId('Microsoft.Network/applicationGateways',variables('appGatewayName'))]",
+		"identityResourceId": "[concat(resourceId('Microsoft.Web/sites', variables('appServiceName')),'/providers/Microsoft.ManagedIdentity/Identities/default')]",
+		"cosmosAuthkeyVaultSecretName": "CosmosSecret",
+		"cosmosDbAccountName": "[concat(parameters('regionName'), '-cosmosdb-', substring(uniquestring(resourceGroup().name),0,6))]",
+		"storageAccountSku": "Standard_LRS",
+		"storageAccountName": "[concat(parameters('regionName'), 'stor', substring(uniquestring(resourceGroup().name),0,6))]"
+	},
+	"resources": [
+		{
+			"type": "Microsoft.Storage/storageAccounts",
+			"sku": {
+				"name": "[variables('storageAccountSku')]"
+			},
+			"kind": "StorageV2",
+			"name": "[variables('storageAccountName')]",
+			"apiVersion": "2018-03-01-preview",
+			"location": "[parameters('deploy_location')]",
+			"properties": {
+				"supportsHttpsTrafficOnly": true,
+				"encryption": {
+					"services": {
+						"file": {
+							"enabled": true
+						},
+						"blob": {
+							"enabled": true
+						}
+					},
+					"keySource": "Microsoft.Storage"
+				},
+				"accessTier": "Hot"
+			},
+			"dependsOn": []
+		},
+		{
+			"type": "Microsoft.DocumentDB/databaseAccounts",
+			"kind": "GlobalDocumentDB",
+			"name": "[variables('cosmosDbAccountName')]",
+			"apiVersion": "2015-04-08",
+			"location": "[parameters('deploy_location')]",
+			"properties": {
+				"databaseAccountOfferType": "Standard",
+				"name": "[variables('cosmosDbAccountName')]"
+			},
+			"dependsOn": []
+		},
+		{
+			"type": "Microsoft.Network/virtualNetworks",
+			"name": "[variables('virtualNetworkName')]",
+			"apiVersion": "2018-02-01",
+			"location": "[parameters('deploy_location')]",
+			"properties": {
+				"addressSpace": {
+					"addressPrefixes": [
+						"[variables('addressPrefix')]"
+					]
+				},
+				"subnets": [
+					{
+						"name": "[variables('subnetName')]",
+						"properties": {
+							"addressPrefix": "[variables('subnetPrefix')]"
+						}
+					}
+				],
+				"enableDdosProtection": false
+			},
+			"dependsOn": []
+		},
+		{
+			"type": "Microsoft.Network/publicIPAddresses",
+			"name": "[variables('appGatewayPublicIpName')]",
+			"apiVersion": "2018-02-01",
+			"location": "[parameters('deploy_location')]",
+			"properties": {
+				"publicIPAllocationMethod": "[variables('publicIpAddressType')]"
+			},
+			"dependsOn": []
+		},
+		{
+			"type": "Microsoft.Web/serverfarms",
+			"sku": {
+				"name": "[variables('appServicePlanSize')]",
+				"capacity": "[variables('appServicePlanInstances')]"
+			},
+			"name": "[variables('appServicePlanName')]",
+			"apiVersion": "2016-09-01",
+			"location": "[parameters('deploy_location')]",
+			"properties": {
+			},
+			"dependsOn": []
+		},
+		{
+			"type": "Microsoft.Web/sites",
+			"name": "[variables('appServiceName')]",
+			"apiVersion": "2016-08-01",
+			"location": "[parameters('deploy_location')]",
+			"identity": {
+				"type": "SystemAssigned"
+			},
+			"properties": {
+				"serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName'))]",
+				"clientAffinityEnabled": false,
+				"alwaysOn": true
+			},
+			"dependsOn": [
+				"[concat('Microsoft.Web/serverfarms/', variables('appServicePlanName'))]"
+			]
+		},
+		{
+			"type": "Microsoft.KeyVault/vaults",
+			"name": "[variables('keyVaultName')]",
+			"apiVersion": "2016-10-01",
+			"location": "[parameters('deploy_location')]",
+			"properties": {
+				"sku": {
+					"family": "[variables('keyVaultSkuFamily')]",
+					"name": "[variables('keyVaultSkuName')]"
+				},
+				"tenantId": "[subscription().tenantId]",
+				"accessPolicies": [
+					{
+						"tenantId": "[subscription().tenantId]",
+						"objectId": "[parameters('keyVaultOwnerId')]",
+						"permissions": {
+							"keys": [
+								"get",
+								"list",
+								"update",
+								"create",
+								"import",
+								"delete",
+								"recover",
+								"backup",
+								"restore"
+							],
+							"secrets": [
+								"get",
+								"list",
+								"set",
+								"delete",
+								"recover",
+								"backup",
+								"restore"
+							],
+							"certificates": [
+								"get",
+								"list",
+								"update",
+								"create",
+								"import",
+								"delete",
+								"recover",
+								"managecontacts",
+								"manageissuers",
+								"getissuers",
+								"listissuers",
+								"setissuers",
+								"deleteissuers"
+							]
+						}
+					},
+					{
+						"tenantId": "[subscription().tenantId]",
+						"objectId": "[reference(variables('identityResourceId'), '2015-08-31-PREVIEW').principalId]",
+						"permissions": {
+							"secrets": [
+								"get"
+							]
+						}
+					}
+				]
+			},
+			"dependsOn": [
+				"[concat('Microsoft.Web/sites/', variables('appServiceName'))]"
+			]
+		},
+		{
+			"type": "Microsoft.KeyVault/vaults/secrets",
+			"name": "[concat(variables('keyVaultName'), '/', variables('cosmosAuthkeyVaultSecretName'))]",
+			"apiVersion": "2015-06-01",
+			"properties": {
+				"value": "[listKeys(resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosDbAccountName')), providers('Microsoft.DocumentDB','databaseAccounts').apiVersions[0]).primaryMasterKey]"
+			},
+			"dependsOn": [
+				"[concat('Microsoft.KeyVault/vaults/', variables('keyVaultName'))]"
+			]
+		},
+		{
+			"type": "Microsoft.Network/applicationGateways",
+			"name": "[variables('appGatewayName')]",
+			"apiVersion": "2018-02-01",
+			"location": "[parameters('deploy_location')]",
+			"scale": null,
+			"properties": {
+				"sku": {
+					"name": "[variables('appGatewaySkuName')]",
+					"tier": "[variables('appGatewaySkuTier')]",
+					"capacity": "[variables('appGatewaySkuCapacity')]"
+				},
+				"gatewayIPConfigurations": [
+					{
+						"name": "appGatewayIpConfig",
+						"properties": {
+							"subnet": {
+								"id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('virtualNetworkName'), variables('subnetName'))]"
+							}
+						},
+						"type": "Microsoft.Network/applicationGateways/gatewayIPConfigurations"
+					}
+				],
+				"frontendIPConfigurations": [
+					{
+						"name": "appGatewayFrontendIP",
+						"type": "Microsoft.Network/applicationGateways/frontendIPConfigurations",
+						"properties": {
+							"privateIPAllocationMethod": "Dynamic",
+							"publicIPAddress": {
+								"id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('appGatewayPublicIpName'))]"
+							}
+						}
+					}
+				],
+				"frontendPorts": [
+					{
+						"name": "appGatewayFrontendPort",
+						"properties": {
+							"port": 80
+						},
+						"type": "Microsoft.Network/applicationGateways/frontendPorts"
+					}
+				],
+				"backendAddressPools": [
+					{
+						"name": "appGatewayBackendPool",
+						"properties": {
+							"provisioningState": "Succeeded",
+							"backendAddresses": [
+								{
+									"fqdn": "[concat(variables('appServiceName'), '.azurewebsites.net')]"
+								}
+							]
+						},
+						"type": "Microsoft.Network/applicationGateways/backendAddressPools"
+					}
+				],
+				"backendHttpSettingsCollection": [
+					{
+						"name": "appGatewayBackendHttpSettings",
+						"properties": {
+							"port": 80,
+							"protocol": "Http",
+							"cookieBasedAffinity": "Disabled",
+							"pickHostNameFromBackendAddress": true,
+							"requestTimeout": 30,
+							"probe": {
+								"id": "[concat(variables('appGatewayID'), '/probes/BasicProbe')]"
+							}
+						},
+						"type": "Microsoft.Network/applicationGateways/backendHttpSettingsCollection"
+					}
+				],
+				"httpListeners": [
+					{
+						"name": "appGatewayHttpListener",
+						"properties": {
+							"frontendIPConfiguration": {
+								"id": "[concat(variables('appGatewayID'), '/frontendIPConfigurations/appGatewayFrontendIP')]"
+							},
+							"frontendPort": {
+								"id": "[concat(variables('appGatewayID'), '/frontendPorts/appGatewayFrontendPort')]"
+							},
+							"protocol": "Http",
+							"requireServerNameIndication": false
+						},
+						"type": "Microsoft.Network/applicationGateways/httpListeners"
+					}
+				],
+				"requestRoutingRules": [
+					{
+						"name": "rule1",
+						"properties": {
+							"ruleType": "Basic",
+							"httpListener": {
+								"id": "[concat(variables('appGatewayID'), '/httpListeners/appGatewayHttpListener')]"
+							},
+							"backendAddressPool": {
+								"id": "[concat(variables('appGatewayID'), '/backendAddressPools/appGatewayBackendPool')]"
+							},
+							"backendHttpSettings": {
+								"id": "[concat(variables('appGatewayID'), '/backendHttpSettingsCollection/appGatewayBackendHttpSettings')]"
+							}
+						},
+						"type": "Microsoft.Network/applicationGateways/requestRoutingRules"
+					}
+				],
+				"probes": [
+					{
+						"name": "BasicProbe",
+						"properties": {
+							"protocol": "Http",
+							"path": "/",
+							"interval": 30,
+							"timeout": 30,
+							"unhealthyThreshold": 3,
+							"pickHostNameFromBackendHttpSettings": true,
+							"minServers": 0,
+							"match": {}
+						},
+						"type": "Microsoft.Network/applicationGateways/probes"
+					}
+				],
+				"webApplicationFirewallConfiguration": {
+					"enabled": true,
+					"firewallMode": "Detection",
+					"ruleSetType": "OWASP",
+					"ruleSetVersion": "3.0",
+					"disabledRuleGroups": []
+				},
+				"enableHttp2": true
+			},
+			"dependsOn": [
+				"[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]",
+				"[concat('Microsoft.Network/publicIpAddresses/', variables('appGatewayPublicIpName'))]"
+			]
+		}
+
+	],
+	"outputs": {
+		 "appGatewayPublicIpName": {
+      "type": "string",
+      "value": "[variables('appGatewayPublicIpName')]"
+    }
+	}
+}
