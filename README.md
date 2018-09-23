@@ -2,6 +2,8 @@
 This is an Azure ARM Template and associated PowerShell deployment script to create a web app, CosmosDB, application gateway with 
 Web Application Firewall, and Storage Account for logging.
 
+The template also creates a Managed Service Identity for the web app, a KeyVault, and adds the CosmosDB auth key as a secret in KeyVault and gives the Web App's MSI GET access to this secret. 
+
 The PowerShell deployment script also creates an endpoint for the new webapp in a Traffic Manager which is created if it does not already exist. 
 
 You can use this script to replicate a web app's environment across several regions. The traffic manager will then direct requests to the most performant region (e.g. usually the 
